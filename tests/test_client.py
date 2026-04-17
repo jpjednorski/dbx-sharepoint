@@ -159,6 +159,24 @@ class TestListFiles:
         assert df.iloc[1]["is_folder"] == True
 
     @responses.activate
+    def test_list_files_at_root_uses_drive_root(self, gov_client):
+        # Root path must hit `drive/root/children`, not `drive/root::/children`
+        responses.add(
+            responses.GET,
+            "https://graph.microsoft.us/v1.0/sites/myorg.sharepoint.us:/sites/TeamSite",
+            json={"id": "site-id-123"},
+        )
+        responses.add(
+            responses.GET,
+            "https://graph.microsoft.us/v1.0/sites/site-id-123/drive/root/children",
+            json={"value": [{"name": "top.xlsx", "size": 1, "file": {}}]},
+        )
+
+        df = gov_client.list_files()
+        assert len(df) == 1
+        assert df.iloc[0]["name"] == "top.xlsx"
+
+    @responses.activate
     def test_list_files_follows_pagination(self, gov_client):
         responses.add(
             responses.GET,

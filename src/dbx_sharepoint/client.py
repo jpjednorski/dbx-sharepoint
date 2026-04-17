@@ -173,7 +173,22 @@ class SharePointClient:
             path = url_or_path
         return path if path == "/" else path.rstrip("/")
 
-    def list_files(self, url_or_path: str) -> pd.DataFrame:
+    def _drive_item_url(self, site_id: str, file_path: str, suffix: str = "") -> str:
+        """Build a Graph API URL for a drive item.
+
+        Handles the root case (empty/slash path) where the `root:/path:`
+        syntax is invalid — Graph expects `drive/root` with no colon segment.
+
+        For non-root paths, produces: drive/root:/{path}:{suffix}
+        For root path, produces:      drive/root{suffix}
+        """
+        base = f"{self._graph_endpoint}/v1.0/sites/{site_id}/drive"
+        clean = file_path.strip("/")
+        if clean:
+            return f"{base}/root:/{clean}:{suffix}"
+        return f"{base}/root{suffix}"
+
+    def list_files(self, url_or_path: str = "/") -> pd.DataFrame:
         """List files and folders at the given SharePoint location.
 
         Args:
@@ -186,9 +201,7 @@ class SharePointClient:
         """
         file_path = self._resolve_path(url_or_path)
         site_id = self._get_site_id()
-        url: Optional[str] = (
-            f"{self._graph_endpoint}/v1.0/sites/{site_id}/drive/root:{file_path}:/children"
-        )
+        url: Optional[str] = self._drive_item_url(site_id, file_path, suffix="/children")
 
         items: list = []
         while url:
@@ -225,7 +238,7 @@ class SharePointClient:
         """
         file_path = self._resolve_path(url_or_path)
         site_id = self._get_site_id()
-        url = f"{self._graph_endpoint}/v1.0/sites/{site_id}/drive/root:{file_path}:/content"
+        url = self._drive_item_url(site_id, file_path, suffix="/content")
 
         resp = self._request("GET", url)
         return resp.content
@@ -248,16 +261,15 @@ class SharePointClient:
 
     def _upload_simple(self, content: bytes, file_path: str) -> None:
         site_id = self._get_site_id()
-        url = f"{self._graph_endpoint}/v1.0/sites/{site_id}/drive/root:{file_path}:/content"
+        url = self._drive_item_url(site_id, file_path, suffix="/content")
         headers = self._headers()
         headers["Content-Type"] = "application/octet-stream"
         self._request("PUT", url, headers=headers, data=content)
 
     def _upload_session(self, content: bytes, file_path: str) -> None:
         site_id = self._get_site_id()
-        session_url = (
-            f"{self._graph_endpoint}/v1.0/sites/{site_id}"
-            f"/drive/root:{file_path}:/createUploadSession"
+        session_url = self._drive_item_url(
+            site_id, file_path, suffix="/createUploadSession"
         )
         resp = self._request(
             "POST",
