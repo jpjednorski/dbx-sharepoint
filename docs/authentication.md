@@ -11,6 +11,18 @@ For least-privilege setup, the library needs only:
 
 No `Sites.*.All` or `Files.*` permissions are required. See [Option A](#option-a-sitesselected-recommended) for the exact grant call.
 
+## Who does what
+
+Setup touches three systems, usually owned by different teams. Most engagements stall on the handoff, not the technical steps.
+
+| Step | System | Who you need |
+|---|---|---|
+| Register the app, add Graph **application** permissions, grant tenant admin consent | Microsoft Entra ID (Azure AD) | Your Entra tenant admin team (Global Administrator or Privileged Role Administrator) |
+| Authorize the app on specific SharePoint sites (Option A) | SharePoint / Graph | The SharePoint site owner decides which sites; the grant call itself currently requires a tenant admin to execute |
+| Store the tenant ID, client ID, and client secret | Databricks | Workspace admin or whoever owns the target secret scope |
+
+Line up all three owners before starting. The Entra admin and SharePoint site owner are often different people in different orgs, and the grant sequence only works top-down (tenant-level consent first, then per-site authorization).
+
 ---
 
 ## 1. Register an Azure AD application
