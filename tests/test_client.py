@@ -228,6 +228,52 @@ class TestUpload:
 
         assert responses.calls[1].request.body == b"fake-excel-bytes"
 
+    @responses.activate
+    def test_upload_large_file_uses_upload_session(self, gov_client):
+        # Force tiny threshold/chunk so a 10-byte payload exercises 3 chunks
+        gov_client._UPLOAD_SESSION_THRESHOLD = 3
+        gov_client._UPLOAD_CHUNK_SIZE = 4
+
+        responses.add(
+            responses.GET,
+            "https://graph.microsoft.us/v1.0/sites/myorg.sharepoint.us:/sites/TeamSite",
+            json={"id": "site-id-123"},
+        )
+        responses.add(
+            responses.POST,
+            "https://graph.microsoft.us/v1.0/sites/site-id-123/drive/root:/Shared Documents/big.xlsx:/createUploadSession",
+            json={"uploadUrl": "https://upload.sharepoint.us/session/abc"},
+        )
+        responses.add(
+            responses.PUT,
+            "https://upload.sharepoint.us/session/abc",
+            json={"nextExpectedRanges": ["4-9"]},
+            status=202,
+        )
+        responses.add(
+            responses.PUT,
+            "https://upload.sharepoint.us/session/abc",
+            json={"nextExpectedRanges": ["8-9"]},
+            status=202,
+        )
+        responses.add(
+            responses.PUT,
+            "https://upload.sharepoint.us/session/abc",
+            json={"id": "item-final"},
+            status=201,
+        )
+
+        payload = b"0123456789"
+        gov_client.upload(payload, "/Shared Documents/big.xlsx")
+
+        chunk_calls = [c for c in responses.calls if c.request.url.startswith("https://upload.")]
+        assert len(chunk_calls) == 3
+        assert chunk_calls[0].request.headers["Content-Range"] == "bytes 0-3/10"
+        assert chunk_calls[1].request.headers["Content-Range"] == "bytes 4-7/10"
+        assert chunk_calls[2].request.headers["Content-Range"] == "bytes 8-9/10"
+        # Upload URL is pre-signed — client must not send Authorization on chunk PUTs
+        assert "Authorization" not in chunk_calls[0].request.headers
+
 
 class TestErrorHandling:
     @responses.activate

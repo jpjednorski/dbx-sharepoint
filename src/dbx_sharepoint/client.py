@@ -34,6 +34,8 @@ class SharePointClient:
     """
 
     _MAX_RETRIES = 3
+    _UPLOAD_SESSION_THRESHOLD = 4 * 1024 * 1024
+    _UPLOAD_CHUNK_SIZE = 10 * 1024 * 1024
 
     def __init__(
         self,
@@ -231,17 +233,56 @@ class SharePointClient:
     def upload(self, content: bytes, url_or_path: str) -> None:
         """Upload bytes to a file on SharePoint.
 
+        Automatically uses a chunked upload session for files larger than
+        4 MiB, since Graph's simple upload endpoint is unreliable at that size.
+
         Args:
             content: File contents as bytes.
             url_or_path: Full SharePoint URL or path relative to the site.
         """
         file_path = self._resolve_path(url_or_path)
+        if len(content) > self._UPLOAD_SESSION_THRESHOLD:
+            self._upload_session(content, file_path)
+        else:
+            self._upload_simple(content, file_path)
+
+    def _upload_simple(self, content: bytes, file_path: str) -> None:
         site_id = self._get_site_id()
         url = f"{self._graph_endpoint}/v1.0/sites/{site_id}/drive/root:{file_path}:/content"
-
         headers = self._headers()
         headers["Content-Type"] = "application/octet-stream"
         self._request("PUT", url, headers=headers, data=content)
+
+    def _upload_session(self, content: bytes, file_path: str) -> None:
+        site_id = self._get_site_id()
+        session_url = (
+            f"{self._graph_endpoint}/v1.0/sites/{site_id}"
+            f"/drive/root:{file_path}:/createUploadSession"
+        )
+        resp = self._request(
+            "POST",
+            session_url,
+            json={"item": {"@microsoft.graph.conflictBehavior": "replace"}},
+        )
+        upload_url = resp.json()["uploadUrl"]
+
+        total = len(content)
+        chunk_size = self._UPLOAD_CHUNK_SIZE
+        for start in range(0, total, chunk_size):
+            end = min(start + chunk_size, total) - 1
+            chunk = content[start:end + 1]
+            chunk_headers = {
+                "Content-Length": str(len(chunk)),
+                "Content-Range": f"bytes {start}-{end}/{total}",
+            }
+            chunk_resp = requests.put(
+                upload_url, data=chunk, headers=chunk_headers, timeout=300
+            )
+            if chunk_resp.status_code not in (200, 201, 202):
+                raise SharePointError(
+                    f"Upload session chunk failed "
+                    f"(HTTP {chunk_resp.status_code}): {chunk_resp.text}"
+                )
 
     def read_excel(
         self,

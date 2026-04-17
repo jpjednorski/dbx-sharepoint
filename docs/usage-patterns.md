@@ -217,6 +217,7 @@ combined = pd.concat(frames, ignore_index=True)
 - `upload`, `write_excel`, and `save` all issue a PUT to the drive-item path. PUTs are idempotent: re-running the same write overwrites the same file.
 - There is no transaction across files. If a job writes ten files and fails on the fifth, the first four are on SharePoint. Structure jobs so that re-running from scratch is safe, which idempotent PUTs make straightforward.
 - There is no "create-if-not-exists" primitive. Writing to a target path creates it, or overwrites it if it already exists.
+- **Large files are handled automatically.** For payloads larger than 4 MiB, the library switches from a single PUT to a Microsoft Graph [upload session](https://learn.microsoft.com/graph/api/driveitem-createuploadsession), uploading in 10 MiB chunks. Graph's simple-upload endpoint is unreliable above 4 MiB, which is easy to hit with a moderately sized Excel file. There is no action required on your side — call `upload`/`write_excel`/`save` as normal. Graph's hard ceiling is 250 GiB per file, well beyond anything Excel can open.
 
 ## Rate limiting
 
