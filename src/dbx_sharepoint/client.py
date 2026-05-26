@@ -185,6 +185,8 @@ class SharePointClient:
         base = f"{self._graph_endpoint}/v1.0/sites/{site_id}/drive"
         clean = file_path.strip("/")
         if clean:
+            if suffix == "":
+                return f"{base}/root:/{clean}"
             return f"{base}/root:/{clean}:{suffix}"
         return f"{base}/root{suffix}"
 
@@ -243,6 +245,18 @@ class SharePointClient:
         resp = self._request("GET", url)
         return resp.content
 
+    def delete(self, url_or_path: str) -> None:
+        """Delete a file on SharePoint.
+
+        Args:
+            url_or_path: Full SharePoint URL or path relative to the site.
+        """
+        file_path = self._resolve_path(url_or_path)
+        site_id = self._get_site_id()
+        url = self._drive_item_url(site_id, file_path, suffix="")
+        headers = self._headers()
+        self._request("DELETE", url, headers=headers)
+
     def upload(self, content: bytes, url_or_path: str) -> None:
         """Upload bytes to a file on SharePoint.
 
@@ -264,7 +278,8 @@ class SharePointClient:
         url = self._drive_item_url(site_id, file_path, suffix="/content")
         headers = self._headers()
         headers["Content-Type"] = "application/octet-stream"
-        self._request("PUT", url, headers=headers, data=content)
+        params = {"@microsoft.graph.conflictBehavior": "replace"}
+        self._request("PUT", url, headers=headers, data=content, params=params)
 
     def _upload_session(self, content: bytes, file_path: str) -> None:
         site_id = self._get_site_id()
