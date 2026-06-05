@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import zipfile
 from typing import Optional, Union
 
 import openpyxl
@@ -8,6 +9,20 @@ import pandas as pd
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
 _VALID_ORIENTATIONS = ("rows", "columns")
+
+
+def _has_vba_project(data: bytes) -> bool:
+    """Return True if the workbook bytes contain an embedded VBA project.
+
+    Macro-enabled workbooks (.xlsm) store macros in ``xl/vbaProject.bin``
+    inside the xlsx zip container. openpyxl strips this unless the workbook
+    is loaded with ``keep_vba=True``, which corrupts the file on save.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            return "xl/vbaProject.bin" in zf.namelist()
+    except zipfile.BadZipFile:
+        return False
 
 
 def dataframe_from_excel_bytes(
@@ -48,6 +63,43 @@ def dataframe_to_excel_bytes(
     return buf.getvalue()
 
 
+def dataframe_to_excel_bytes_from_template(
+    template_data: bytes,
+    df: pd.DataFrame,
+    sheet_name: Optional[str] = None,
+    start_cell: str = "A1",
+    orientation: str = "rows",
+) -> bytes:
+    """Fill a macro-enabled template with DataFrame data, preserving VBA.
+
+    Loads a ``.xlsm`` template (keeping its VBA project intact), writes the
+    DataFrame starting at ``start_cell``, and returns the serialized
+    macro-enabled bytes. Use this instead of :func:`dataframe_to_excel_bytes`
+    when the template contains macros — re-saving a ``.xlsm`` without its
+    VBA project produces a file Excel reports as corrupt.
+
+    Args:
+        template_data: Raw .xlsm (or .xlsx) template bytes.
+        df: DataFrame to write.
+        sheet_name: Target sheet. Defaults to the workbook's active sheet.
+        start_cell: Top-left cell to begin writing (e.g., "A2"). Defaults "A1".
+        orientation: "rows" (default) writes each df row as an Excel row;
+            "columns" transposes.
+
+    Returns:
+        Raw workbook bytes with macros preserved when present in the template.
+    """
+    template = Template(template_data)
+    target_sheet = sheet_name if sheet_name is not None else template.active_sheet
+    template.fill_range(
+        sheet=target_sheet,
+        start_cell=start_cell,
+        data=df,
+        orientation=orientation,
+    )
+    return template.to_bytes()
+
+
 def _cell_to_row_col(cell_ref: str) -> tuple:
     """Convert a cell reference like 'B3' to (row, col) 1-indexed tuple."""
     try:
@@ -60,12 +112,27 @@ def _cell_to_row_col(cell_ref: str) -> tuple:
 class Template:
     """An Excel template that can be populated with data and saved.
 
+    Macro-enabled templates (``.xlsm``) are detected automatically and loaded
+    with their VBA project preserved, so macros survive the round-trip and the
+    saved file opens cleanly in Excel.
+
     Args:
-        data: Raw .xlsx file bytes of the template.
+        data: Raw .xlsx or .xlsm file bytes of the template.
+        keep_vba: Whether to preserve the VBA project. ``None`` (default)
+            auto-detects from the file contents. Pass ``True``/``False`` to
+            force the behavior.
     """
 
-    def __init__(self, data: bytes):
-        self._workbook = openpyxl.load_workbook(io.BytesIO(data))
+    def __init__(self, data: bytes, keep_vba: Optional[bool] = None):
+        if keep_vba is None:
+            keep_vba = _has_vba_project(data)
+        self._keep_vba = keep_vba
+        self._workbook = openpyxl.load_workbook(io.BytesIO(data), keep_vba=keep_vba)
+
+    @property
+    def active_sheet(self) -> str:
+        """Name of the workbook's active sheet."""
+        return self._workbook.active.title
 
     def fill_range(
         self,
@@ -206,7 +273,11 @@ class Template:
         ws[cell] = value
 
     def to_bytes(self) -> bytes:
-        """Serialize the modified template to .xlsx bytes."""
+        """Serialize the modified template to workbook bytes.
+
+        For macro-enabled templates loaded with ``keep_vba=True``, the VBA
+        project is preserved and the output is valid ``.xlsm``.
+        """
         buf = io.BytesIO()
         self._workbook.save(buf)
         return buf.getvalue()

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dbx-sharepoint"
-version = "0.1.2"
+version = "0.2.0"
 description = "Simplified SharePoint file and Excel interfaces for Azure Gov Databricks"
 requires-python = ">=3.9"
 dependencies = [
