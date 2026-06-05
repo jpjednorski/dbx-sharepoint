@@ -12,6 +12,7 @@ from dbx_sharepoint.excel import (
     Template,
     dataframe_from_excel_bytes,
     dataframe_to_excel_bytes,
+    dataframe_to_excel_bytes_from_template,
 )
 from dbx_sharepoint.exceptions import (
     SharePointAuthError,
@@ -343,6 +344,40 @@ class SharePointClient:
         """
         xlsx_bytes = dataframe_to_excel_bytes(df, sheet_name=sheet_name)
         self.upload(xlsx_bytes, url_or_path)
+
+    def write_excel_from_template(
+        self,
+        df: pd.DataFrame,
+        template_url_or_path: str,
+        dest_url_or_path: str,
+        sheet_name: Optional[str] = None,
+        start_cell: str = "A1",
+        orientation: str = "rows",
+    ) -> None:
+        """Fill a SharePoint Excel template with a DataFrame and save the result.
+
+        Downloads the template, writes ``df`` into it, and uploads the result to
+        ``dest_url_or_path``. Macro-enabled templates (``.xlsm``) keep their VBA
+        project intact, so the saved file opens cleanly in Excel.
+
+        Args:
+            df: DataFrame to write.
+            template_url_or_path: SharePoint URL or path to the template file.
+            dest_url_or_path: SharePoint URL or path for the output file. Use a
+                ``.xlsm`` extension when the template is macro-enabled.
+            sheet_name: Target sheet. Defaults to the template's active sheet.
+            start_cell: Top-left cell to begin writing. Defaults to "A1".
+            orientation: "rows" (default) or "columns".
+        """
+        template_bytes = self.download(template_url_or_path)
+        out_bytes = dataframe_to_excel_bytes_from_template(
+            template_bytes,
+            df,
+            sheet_name=sheet_name,
+            start_cell=start_cell,
+            orientation=orientation,
+        )
+        self.upload(out_bytes, dest_url_or_path)
 
     def open_template(self, url_or_path: str) -> Template:
         """Download an Excel template from SharePoint for editing.

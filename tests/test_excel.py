@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import zipfile
 
 import openpyxl
 import pandas as pd
@@ -8,8 +9,30 @@ import pytest
 from dbx_sharepoint.excel import (
     dataframe_from_excel_bytes,
     dataframe_to_excel_bytes,
+    dataframe_to_excel_bytes_from_template,
     Template,
 )
+
+
+def _make_xlsm_bytes(sheet_name: str = "Sheet1") -> bytes:
+    """Helper: create macro-enabled (.xlsm) workbook bytes with a VBA project.
+
+    openpyxl can't author a vbaProject.bin, so we build a normal workbook and
+    splice a stub xl/vbaProject.bin into the zip container. That is enough to
+    exercise the keep_vba round-trip: the marker must survive a save.
+    """
+    wb = openpyxl.Workbook()
+    wb.active.title = sheet_name
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    src = io.BytesIO(buf.getvalue())
+    out = io.BytesIO()
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(out, "w") as zout:
+        for item in zin.namelist():
+            zout.writestr(item, zin.read(item))
+        zout.writestr("xl/vbaProject.bin", b"\xcf\x11\xe0vba-stub")
+    return out.getvalue()
 
 
 def _make_workbook_bytes(data: dict, sheet_name: str = "Sheet1") -> bytes:
@@ -181,6 +204,42 @@ class TestTemplateSetValue:
 
         ws = template._workbook["Report"]
         assert ws["A1"].value == "Q1 2026 Report"
+
+
+class TestMacroEnabledTemplate:
+    def test_template_autodetects_and_preserves_vba(self):
+        template = Template(_make_xlsm_bytes("Macros"))
+        assert template._keep_vba is True
+
+        template.set_value("Macros", cell="A1", value=42)
+        out = template.to_bytes()
+
+        with zipfile.ZipFile(io.BytesIO(out)) as zf:
+            assert "xl/vbaProject.bin" in zf.namelist()
+
+    def test_plain_xlsx_does_not_keep_vba(self):
+        template = Template(_make_workbook_bytes({"col": [1]}, sheet_name="S1"))
+        assert template._keep_vba is False
+
+    def test_dataframe_to_excel_bytes_from_template_preserves_vba(self):
+        df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+        out = dataframe_to_excel_bytes_from_template(
+            _make_xlsm_bytes("Sheet1"), df, start_cell="A1"
+        )
+
+        with zipfile.ZipFile(io.BytesIO(out)) as zf:
+            assert "xl/vbaProject.bin" in zf.namelist()
+
+        wb = openpyxl.load_workbook(io.BytesIO(out), keep_vba=True)
+        ws = wb["Sheet1"]
+        assert ws["A1"].value == 1
+        assert ws["B2"].value == 4
+
+    def test_from_template_defaults_to_active_sheet(self):
+        df = pd.DataFrame({"x": [9]})
+        out = dataframe_to_excel_bytes_from_template(_make_xlsm_bytes("Only"), df)
+        wb = openpyxl.load_workbook(io.BytesIO(out), keep_vba=True)
+        assert wb["Only"]["A1"].value == 9
 
 
 class TestTemplateToBytes:

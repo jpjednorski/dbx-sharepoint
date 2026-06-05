@@ -127,6 +127,46 @@ sp.save(template, "/Shared Documents/reports/out.xlsx")
 
 `sp.save` is equivalent to `sp.upload(template.to_bytes(), path)`. Call `to_bytes` directly when the file needs to go somewhere other than SharePoint.
 
+## Macro-enabled templates (`.xlsm`)
+
+Templates that contain VBA macros, buttons, or `Workbook_Open` handlers are stored as `.xlsm`. These work the same way as `.xlsx` templates — the only difference is that the VBA project must be preserved on save, or Excel will report the file as corrupt when opening it.
+
+This is handled automatically. `open_template` (and the `Template` constructor) inspect the file for an embedded VBA project and, when present, load the workbook with `keep_vba=True`:
+
+```python
+# .xlsm is detected automatically — macros are preserved
+t = sp.open_template("/Shared Documents/templates/inspection.xlsm")
+t.fill_range("Data", start_cell="A2", data=results_df)
+t.set_value("Cover", cell="B2", value="June 2026")
+sp.save(t, "/Shared Documents/reports/2026-06.xlsm")
+```
+
+Keep the `.xlsm` extension on the destination path so Excel treats the saved file as macro-enabled.
+
+For the common "fill one sheet from a DataFrame and upload" case, there is a one-call helper:
+
+```python
+sp.write_excel_from_template(
+    df=results_df,
+    template_url_or_path="/Shared Documents/templates/inspection.xlsm",
+    dest_url_or_path="/Shared Documents/reports/2026-06.xlsm",
+    sheet_name="Data",     # defaults to the template's active sheet
+    start_cell="A2",       # defaults to "A1"
+)
+```
+
+If you have the template bytes in hand (not from SharePoint), use the underlying function directly:
+
+```python
+from dbx_sharepoint import dataframe_to_excel_bytes_from_template
+
+out_bytes = dataframe_to_excel_bytes_from_template(template_bytes, df, start_cell="A2")
+```
+
+Notes:
+- Macro **code** is preserved verbatim; it is not executed. Macros run when a user opens the file in Excel, exactly as designed.
+- To force the behavior either way, pass `keep_vba=True`/`False` to the `Template` constructor.
+
 ## Common patterns
 
 ### Parameterized report
@@ -175,7 +215,7 @@ If `df` grows beyond 21 rows, the call raises `ValueError`. This is usually the 
 ## Limits and caveats
 
 - openpyxl is pure-Python and entirely in-memory. Templates with thousands of heavily-styled cells take longer to load. Very large templates (~100 MB) may be slow.
-- Macro preservation for `.xlsm` is not guaranteed. The library does not strip macros explicitly, but round-tripping through openpyxl is not guaranteed to preserve VBA. Test end-to-end when macros are critical.
+- Macro-enabled workbooks (`.xlsm`) are supported. `Template` and `open_template` auto-detect an embedded VBA project and load it with `keep_vba=True`, so macros survive the round-trip and the saved file opens cleanly in Excel. See [Macro-enabled templates](#macro-enabled-templates-xlsm) below. Loading a `.xlsm` without preserving its VBA project (the openpyxl default) produces a file Excel reports as corrupt.
 - Formulas are preserved but not recalculated. openpyxl writes the formula string; Excel recalculates when the file is opened. A job that reads back a saved template and expects formula results will not find them unless the file is opened in Excel first or the values are computed in Python.
 - Charts that reference filled cells update automatically when the file is opened. Charts that reference cells outside the filled range do not update.
 - Conditional formatting that references filled cells is applied as expected when the file is opened in Excel.
