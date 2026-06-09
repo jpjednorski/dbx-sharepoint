@@ -138,7 +138,11 @@ write_excel(
 ) -> None
 ```
 
-Write a DataFrame as a new `.xlsx` file. This is a single-sheet convenience helper. For multi-sheet workbooks, combine `pd.ExcelWriter` with `sp.upload`:
+Write a DataFrame as a new `.xlsx` file. This is a single-sheet convenience helper.
+
+Writing to a `.xlsm` path raises `ValueError`. `write_excel` builds a fresh workbook with no macros, so the bytes are a regular `.xlsx`; saving them under a `.xlsm` extension produces a file Excel rejects as corrupt. To produce a valid `.xlsm`, use [`write_excel_from_template`](#write_excel_from_template) with a macro-enabled template. Reading a `.xlsm` with `read_excel` works normally — you get the cell data; macros are not represented in a DataFrame.
+
+For multi-sheet workbooks, combine `pd.ExcelWriter` with `sp.upload`:
 
 ```python
 buf = io.BytesIO()
@@ -155,6 +159,24 @@ open_template(url_or_path: str) -> Template
 ```
 
 Download an Excel file from SharePoint and return a `Template` object for editing. See [`Template`](#template).
+
+### `write_excel_from_template`
+
+```python
+write_excel_from_template(
+    df: pd.DataFrame,
+    template_url_or_path: str,
+    dest_url_or_path: str,
+    sheet_name: Optional[str] = None,
+    start_cell: str = "A1",
+    orientation: str = "rows",
+    include_header: bool = True,
+) -> None
+```
+
+Download a template, fill it with `df` starting at `start_cell`, and upload the result to `dest_url_or_path`. `sheet_name` defaults to the template's active sheet. If `sheet_name` is missing from a single-sheet blank template, that blank sheet is renamed; otherwise a new sheet is created. `include_header=True` writes DataFrame column names before the values, matching `write_excel`. This is the one-call path for the common "fill one sheet and save" case.
+
+Macro-enabled templates (`.xlsm`) are detected automatically and their VBA project is preserved, so the saved file opens cleanly in Excel. This is the only write path that produces a valid `.xlsm` — `write_excel` cannot, because it builds a fresh workbook with no macros. Keep the `.xlsm` extension on `dest_url_or_path`. See [Excel templates → Macro-enabled templates](excel-templates.md#macro-enabled-templates-xlsm).
 
 ### `save`
 
@@ -173,10 +195,10 @@ Wrapper around an `openpyxl` workbook with helpers for filling values into cells
 ### Constructor
 
 ```python
-Template(data: bytes)
+Template(data: bytes, keep_vba: Optional[bool] = None)
 ```
 
-This constructor is not typically called directly. Use `SharePointClient.open_template(...)` instead. Pass raw `.xlsx` bytes when loading a template from a source other than SharePoint.
+This constructor is not typically called directly. Use `SharePointClient.open_template(...)` instead. Pass raw `.xlsx` or `.xlsm` bytes when loading a template from a source other than SharePoint. `keep_vba` defaults to auto-detecting macro-enabled files; pass `True`/`False` to force it.
 
 ### `fill_range`
 
@@ -189,6 +211,7 @@ fill_range(
     data: Optional[pd.DataFrame] = None,
     orientation: str = "rows",
     allow_expand: bool = False,
+    include_header: bool = False,
 ) -> None
 ```
 
@@ -205,12 +228,13 @@ Targeting: provide either `sheet + start_cell` or `named_range`. Not both.
 - `data` — DataFrame to write. **Required.**
 - `orientation` — `"rows"` (default) writes each DataFrame row as a row in Excel; `"columns"` transposes so each DataFrame row becomes an Excel column.
 - `allow_expand` — when using `named_range`, allows writing beyond the range's defined bounds. Ignored when using `end_cell`.
+- `include_header` — when `True`, writes DataFrame column names before values. Defaults `False` because styled templates usually already contain headers.
 
 **Raises**
 
 - `ValueError` if neither or both targeting modes are provided, if the named range doesn't exist, if `data` is `None`, or if data exceeds the specified bounds.
 
-Headers are not written. Only cell values are set. Styles, fonts, fills, number formats, and conditional formatting in the template are preserved.
+Headers are only written when `include_header=True`. Styles, fonts, fills, number formats, and conditional formatting in the template are preserved.
 
 ### `set_value`
 

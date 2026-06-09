@@ -22,7 +22,7 @@ A small, dependency-light Python library for reading, writing, and templating Ex
 - Microsoft Graph-based SharePoint access. No SharePoint CSOM, no on-prem dependencies.
 - Gov and Commercial endpoint auto-detection from the site URL. Explicit override supported.
 - Excel read and write via pandas (`read_excel`, `write_excel`).
-- Template workflow that preserves workbook formatting, formulas, and named ranges. Fill a range by `(sheet, start_cell)` or by `named_range`. Transpose with `orientation="columns"`. Optional bounds checking with `end_cell`.
+- Template workflow that preserves workbook formatting, formulas, named ranges, and macro-enabled `.xlsm` structure. Fill a range by `(sheet, start_cell)` or by `named_range`. Transpose with `orientation="columns"`. Optional bounds checking with `end_cell`.
 - Raw file download and upload for any binary content (PDFs, CSVs, images) via bytes.
 - Databricks secret-scope factory method: `SharePointClient.from_databricks_secrets(...)`.
 - Shared-link helper for "anyone with the link" Excel reads that do not require auth.
@@ -111,6 +111,17 @@ template.set_value("Cover", cell="B2", value="Q1 2026 Report")
 template.fill_range("Data", start_cell="B3", data=summary_df)        # by cell anchor
 template.fill_range(named_range="data_table", data=summary_df)        # by named range
 sp.save(template, "/Shared Documents/reports/q1_2026.xlsx")
+```
+
+For the common reusable-template case, including macro-enabled `.xlsm` outputs:
+
+```python
+sp.write_excel_from_template(
+    report_df,
+    "/Shared Documents/templates/MasterTemplate.xlsm",
+    "/Shared Documents/output/Report Data.xlsm",
+    sheet_name="ReportData",
+)
 ```
 
 Details in [docs/excel-templates.md](docs/excel-templates.md).

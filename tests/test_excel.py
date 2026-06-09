@@ -35,6 +35,43 @@ def _make_xlsm_bytes(sheet_name: str = "Sheet1") -> bytes:
     return out.getvalue()
 
 
+def _make_blank_xlsm_bytes(sheet_name: str = "Sheet1") -> bytes:
+    """Helper: macro-enabled (.xlsm) workbook with NO xl/vbaProject.bin.
+
+    Reproduces a blank macro-enabled template as Excel saves it: the package
+    carries the macroEnabled content type, but no VBA binary exists until a
+    macro is added. Detecting macro-enabled by vbaProject.bin alone misses
+    this case and yields a file Excel rejects as corrupt.
+    """
+    wb = openpyxl.Workbook()
+    wb.active.title = sheet_name
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    src = io.BytesIO(buf.getvalue())
+    out = io.BytesIO()
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(out, "w") as zout:
+        for item in zin.namelist():
+            content = zin.read(item)
+            if item == "[Content_Types].xml":
+                content = content.replace(
+                    b"application/vnd.openxmlformats-officedocument."
+                    b"spreadsheetml.sheet.main+xml",
+                    b"application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+                )
+            zout.writestr(item, content)
+    return out.getvalue()
+
+
+def _workbook_content_type(data: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        ct = zf.read("[Content_Types].xml").decode()
+    import re
+
+    m = re.search(r'workbook\.xml" ContentType="([^"]+)"', ct)
+    return m.group(1) if m else ""
+
+
 def _make_workbook_bytes(data: dict, sheet_name: str = "Sheet1") -> bytes:
     """Helper: create an xlsx in memory from a dict of column->values."""
     wb = openpyxl.Workbook()
@@ -232,14 +269,90 @@ class TestMacroEnabledTemplate:
 
         wb = openpyxl.load_workbook(io.BytesIO(out), keep_vba=True)
         ws = wb["Sheet1"]
-        assert ws["A1"].value == 1
-        assert ws["B2"].value == 4
+        assert ws["A1"].value == "x"
+        assert ws["A2"].value == 1
+        assert ws["B3"].value == 4
 
     def test_from_template_defaults_to_active_sheet(self):
         df = pd.DataFrame({"x": [9]})
         out = dataframe_to_excel_bytes_from_template(_make_xlsm_bytes("Only"), df)
         wb = openpyxl.load_workbook(io.BytesIO(out), keep_vba=True)
-        assert wb["Only"]["A1"].value == 9
+        assert wb["Only"]["A1"].value == "x"
+        assert wb["Only"]["A2"].value == 9
+
+    def test_blank_macro_template_detected_without_vba_binary(self):
+        # A blank .xlsm has the macroEnabled content type but no vbaProject.bin.
+        template = Template(_make_blank_xlsm_bytes("Sheet1"))
+        assert template._keep_vba is True
+
+    def test_blank_macro_template_output_keeps_macro_content_type(self):
+        # Regression: output must declare the macroEnabled content type, or
+        # Excel rejects the .xlsm as "file format or extension is not valid".
+        df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        out = dataframe_to_excel_bytes_from_template(
+            _make_blank_xlsm_bytes("Sheet1"), df
+        )
+        assert _workbook_content_type(out) == (
+            "application/vnd.ms-excel.sheet.macroEnabled.main+xml"
+        )
+        wb = openpyxl.load_workbook(io.BytesIO(out), keep_vba=True)
+        assert wb["Sheet1"]["A1"].value == "a"
+        assert wb["Sheet1"]["A2"].value == 1
+        assert wb["Sheet1"]["B3"].value == 4
+
+    def test_blank_macro_template_renames_only_blank_sheet_for_target(self):
+        df = pd.DataFrame({"risk_level": ["HIGH"], "value": [10]})
+        out = dataframe_to_excel_bytes_from_template(
+            _make_blank_xlsm_bytes("Sheet1"), df, sheet_name="ReportData"
+        )
+
+        assert _workbook_content_type(out) == (
+            "application/vnd.ms-excel.sheet.macroEnabled.main+xml"
+        )
+        wb = openpyxl.load_workbook(io.BytesIO(out), keep_vba=True)
+        assert wb.sheetnames == ["ReportData"]
+        assert wb["ReportData"]["A1"].value == "risk_level"
+        assert wb["ReportData"]["A2"].value == "HIGH"
+        assert wb["ReportData"]["B2"].value == 10
+
+    def test_template_write_can_omit_headers(self):
+        df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        out = dataframe_to_excel_bytes_from_template(
+            _make_blank_xlsm_bytes("Sheet1"), df, include_header=False
+        )
+
+        wb = openpyxl.load_workbook(io.BytesIO(out), keep_vba=True)
+        assert wb["Sheet1"]["A1"].value == 1
+        assert wb["Sheet1"]["B2"].value == 4
+
+    def test_missing_sheet_creates_new_sheet_when_template_has_content(self):
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Instructions"
+        ws["A1"] = "Do not overwrite"
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        df = pd.DataFrame({"a": [1]})
+        out = dataframe_to_excel_bytes_from_template(
+            buf.getvalue(), df, sheet_name="ReportData"
+        )
+
+        wb2 = openpyxl.load_workbook(io.BytesIO(out))
+        assert wb2.sheetnames == ["Instructions", "ReportData"]
+        assert wb2["Instructions"]["A1"].value == "Do not overwrite"
+        assert wb2["ReportData"]["A1"].value == "a"
+        assert wb2["ReportData"]["A2"].value == 1
+
+    def test_plain_xlsx_output_stays_regular_content_type(self):
+        df = pd.DataFrame({"a": [1]})
+        out = dataframe_to_excel_bytes_from_template(
+            _make_workbook_bytes({"h": []}, sheet_name="Sheet1"), df
+        )
+        assert _workbook_content_type(out) == (
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet.main+xml"
+        )
 
 
 class TestTemplateToBytes:
