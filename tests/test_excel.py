@@ -303,17 +303,17 @@ class TestMacroEnabledTemplate:
     def test_blank_macro_template_renames_only_blank_sheet_for_target(self):
         df = pd.DataFrame({"risk_level": ["HIGH"], "value": [10]})
         out = dataframe_to_excel_bytes_from_template(
-            _make_blank_xlsm_bytes("Sheet1"), df, sheet_name="CAPS"
+            _make_blank_xlsm_bytes("Sheet1"), df, sheet_name="ReportData"
         )
 
         assert _workbook_content_type(out) == (
             "application/vnd.ms-excel.sheet.macroEnabled.main+xml"
         )
         wb = openpyxl.load_workbook(io.BytesIO(out), keep_vba=True)
-        assert wb.sheetnames == ["CAPS"]
-        assert wb["CAPS"]["A1"].value == "risk_level"
-        assert wb["CAPS"]["A2"].value == "HIGH"
-        assert wb["CAPS"]["B2"].value == 10
+        assert wb.sheetnames == ["ReportData"]
+        assert wb["ReportData"]["A1"].value == "risk_level"
+        assert wb["ReportData"]["A2"].value == "HIGH"
+        assert wb["ReportData"]["B2"].value == 10
 
     def test_template_write_can_omit_headers(self):
         df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
@@ -335,14 +335,14 @@ class TestMacroEnabledTemplate:
 
         df = pd.DataFrame({"a": [1]})
         out = dataframe_to_excel_bytes_from_template(
-            buf.getvalue(), df, sheet_name="CAPS"
+            buf.getvalue(), df, sheet_name="ReportData"
         )
 
         wb2 = openpyxl.load_workbook(io.BytesIO(out))
-        assert wb2.sheetnames == ["Instructions", "CAPS"]
+        assert wb2.sheetnames == ["Instructions", "ReportData"]
         assert wb2["Instructions"]["A1"].value == "Do not overwrite"
-        assert wb2["CAPS"]["A1"].value == "a"
-        assert wb2["CAPS"]["A2"].value == 1
+        assert wb2["ReportData"]["A1"].value == "a"
+        assert wb2["ReportData"]["A2"].value == 1
 
     def test_plain_xlsx_output_stays_regular_content_type(self):
         df = pd.DataFrame({"a": [1]})

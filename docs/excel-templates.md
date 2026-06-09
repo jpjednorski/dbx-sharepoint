@@ -156,7 +156,7 @@ sp.write_excel_from_template(
 )
 ```
 
-If `sheet_name` does not exist and the template is a single blank sheet, the helper renames that blank sheet. This supports a reusable blank macro-enabled template such as `MasterTemplate.xlsm` while still producing output sheets like `CAPS`, `Orders`, or `Summary`. If the workbook already has content, a missing `sheet_name` creates a new sheet instead.
+If `sheet_name` does not exist and the template is a single blank sheet, the helper renames that blank sheet. This supports a reusable blank macro-enabled template such as `MasterTemplate.xlsm` while still producing output sheets like `ReportData`, `Orders`, or `Summary`. If the workbook already has content, a missing `sheet_name` creates a new sheet instead.
 
 If you have the template bytes in hand (not from SharePoint), use the underlying function directly:
 

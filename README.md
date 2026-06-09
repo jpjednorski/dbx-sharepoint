@@ -117,10 +117,10 @@ For the common reusable-template case, including macro-enabled `.xlsm` outputs:
 
 ```python
 sp.write_excel_from_template(
-    caps_df,
+    report_df,
     "/Shared Documents/templates/MasterTemplate.xlsm",
-    "/Shared Documents/output/CAPS Data.xlsm",
-    sheet_name="CAPS",
+    "/Shared Documents/output/Report Data.xlsm",
+    sheet_name="ReportData",
 )
 ```
 
