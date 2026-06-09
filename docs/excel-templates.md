@@ -41,6 +41,7 @@ template.fill_range(
     data=None,              # DataFrame (required)
     orientation="rows",     # "rows" | "columns"
     allow_expand=False,     # for named ranges, allow writing beyond bounds
+    include_header=False,   # write DataFrame column names before values
 )
 ```
 
@@ -100,9 +101,9 @@ template.fill_range("Metrics", start_cell="B3", data=df, orientation="columns")
 #   B5: 45000      C5: 50000
 ```
 
-### What `fill_range` does not do
+### What `fill_range` does not do by default
 
-- Does not write column headers. The template already has styled header cells. To include headers, prepend them as a row in the DataFrame (for example, `pd.concat([pd.DataFrame([df.columns], columns=df.columns), df])`) or write them individually with `set_value`.
+- Does not write column headers unless `include_header=True`. Most styled templates already have header cells. The one-call `write_excel_from_template` helper does include headers by default because it mirrors `write_excel`.
 - Does not coerce types. Each DataFrame cell value is written as-is. pandas `Timestamp` values become Excel dates, strings remain strings, and `NaN` values land as blank cells.
 - Does not reset styles. Only cell values change. The template's fills, fonts, borders, and number formats are preserved.
 
@@ -154,6 +155,8 @@ sp.write_excel_from_template(
     start_cell="A2",       # defaults to "A1"
 )
 ```
+
+If `sheet_name` does not exist and the template is a single blank sheet, the helper renames that blank sheet. This supports a reusable blank macro-enabled template such as `MasterTemplate.xlsm` while still producing output sheets like `CAPS`, `Orders`, or `Summary`. If the workbook already has content, a missing `sheet_name` creates a new sheet instead.
 
 If you have the template bytes in hand (not from SharePoint), use the underlying function directly:
 

@@ -429,6 +429,11 @@ class TestWriteExcel:
         wb = openpyxl.load_workbook(io.BytesIO(uploaded))
         assert wb.active["A1"].value == "col"
 
+    def test_write_excel_rejects_xlsm(self, gov_client):
+        df = pd.DataFrame({"col": [1]})
+        with pytest.raises(ValueError, match="write_excel_from_template"):
+            gov_client.write_excel(df, "/Shared Documents/out.xlsm")
+
 
 class TestOpenTemplateAndSave:
     @responses.activate

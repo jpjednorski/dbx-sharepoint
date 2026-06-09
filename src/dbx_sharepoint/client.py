@@ -341,7 +341,22 @@ class SharePointClient:
             df: The DataFrame to write.
             url_or_path: Full SharePoint URL or path for the destination file.
             sheet_name: Name of the sheet in the workbook.
+
+        Raises:
+            ValueError: If the destination ends in ``.xlsm``. A DataFrame has no
+                macros to preserve, and writing a fresh workbook to a ``.xlsm``
+                path produces a file Excel rejects as corrupt (the bytes are a
+                regular ``.xlsx`` but the extension says macro-enabled). Use
+                ``write_excel_from_template`` with a macro-enabled template to
+                produce a valid ``.xlsm``.
         """
+        if url_or_path.lower().rstrip().endswith(".xlsm"):
+            raise ValueError(
+                "write_excel creates a new workbook with no macros and cannot "
+                "produce a valid .xlsm. Write to a .xlsx path instead, or use "
+                "write_excel_from_template(df, template, dest) with a "
+                "macro-enabled template to preserve macros."
+            )
         xlsx_bytes = dataframe_to_excel_bytes(df, sheet_name=sheet_name)
         self.upload(xlsx_bytes, url_or_path)
 
@@ -353,6 +368,7 @@ class SharePointClient:
         sheet_name: Optional[str] = None,
         start_cell: str = "A1",
         orientation: str = "rows",
+        include_header: bool = True,
     ) -> None:
         """Fill a SharePoint Excel template with a DataFrame and save the result.
 
@@ -366,8 +382,12 @@ class SharePointClient:
             dest_url_or_path: SharePoint URL or path for the output file. Use a
                 ``.xlsm`` extension when the template is macro-enabled.
             sheet_name: Target sheet. Defaults to the template's active sheet.
+                If the named sheet does not exist, a blank single-sheet template
+                is renamed to that sheet; otherwise a new sheet is created.
             start_cell: Top-left cell to begin writing. Defaults to "A1".
             orientation: "rows" (default) or "columns".
+            include_header: Whether to write DataFrame column names before the
+                values. Defaults True to match ``write_excel``.
         """
         template_bytes = self.download(template_url_or_path)
         out_bytes = dataframe_to_excel_bytes_from_template(
@@ -376,6 +396,7 @@ class SharePointClient:
             sheet_name=sheet_name,
             start_cell=start_cell,
             orientation=orientation,
+            include_header=include_header,
         )
         self.upload(out_bytes, dest_url_or_path)
 
