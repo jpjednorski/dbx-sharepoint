@@ -170,6 +170,70 @@ Notes:
 - Macro **code** is preserved verbatim; it is not executed. Macros run when a user opens the file in Excel, exactly as designed.
 - To force the behavior either way, pass `keep_vba=True`/`False` to the `Template` constructor.
 
+## Sensitivity labels (Microsoft Information Protection)
+
+Tenants with **mandatory sensitivity labeling** (Microsoft Purview / MIP) block unlabeled Office files from some operations — notably reading one workbook from another (external references, Power Query, linked workbooks). A file written with no label opens fine on double-click in Excel (Excel just prompts for a label), but a remote read of it fails until a label is applied.
+
+openpyxl does not understand the label part of a workbook and **drops it on save**. So a template that is labeled in Excel produces *unlabeled* output when filled through openpyxl — which is exactly the failure mode above. This library re-injects the label so it survives the round-trip.
+
+This covers **classification-only labels** (the file is marked but not encrypted). It does not apply rights-management encryption, which requires the Microsoft MIP SDK.
+
+### The common fix: label the template once
+
+Apply your label (e.g. "INTERNAL") to the template in Excel and save it back to SharePoint. Every file generated from it inherits the label automatically — no code change at the call site:
+
+```python
+sp.write_excel_from_template(
+    df, "/Shared Documents/templates/MasterTemplate.xlsm",
+    "/Shared Documents/output/Report Data.xlsm", sheet_name="ReportData",
+)
+# output carries the template's sensitivity label
+```
+
+The same preservation applies to `open_template` → `sp.save` and to `Template.to_bytes()`.
+
+### Setting a label explicitly
+
+For workbooks written from scratch (`write_excel`, which has no template to inherit from), or to override the template's label, construct a `SensitivityLabel`:
+
+```python
+from dbx_sharepoint import SensitivityLabel
+
+label = SensitivityLabel(
+    label_id="{00000000-1111-2222-3333-444444444444}",  # from your tenant's taxonomy
+    site_id="{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}",   # your tenant/site GUID
+    name="INTERNAL",                                     # informational only
+)
+
+sp.write_excel(df, "/Shared Documents/out.xlsx", sensitivity_label=label)
+sp.write_excel_from_template(df, template_path, dest_path, sensitivity_label=label)
+```
+
+Set a default on the client so every `write_excel` is labeled:
+
+```python
+sp = SharePointClient.from_databricks_secrets(dbutils=dbutils, scope="sharepoint")
+sp._default_sensitivity_label = label  # applies to write_excel when no per-call label is given
+```
+
+### Finding your label IDs
+
+You need the label GUID and the tenant/site GUID. Three ways to get them:
+
+- **Read them off a labeled file.** The most reliable. Label a file by hand in Excel, download it, and extract:
+  ```python
+  from dbx_sharepoint import extract_sensitivity_label
+  label = extract_sensitivity_label(sp.download("/Shared Documents/hand-labeled.xlsx"))
+  ```
+- **Security & Compliance PowerShell:** `Connect-IPPSSession` then `Get-Label | fl DisplayName,Guid`. On **Azure Gov**, use the Gov connection URI (`-ConnectionUri`/`-ExchangeEnvironmentName` for the Gov cloud), the same Gov/Commercial split described in [azure-gov.md](azure-gov.md).
+- **Purview compliance portal** → Information protection → Labels.
+
+### Caveats
+
+- **Encrypting labels are out of scope.** If a label applies protection (encryption), the file becomes an encrypted container rather than a normal `.xlsx`/`.xlsm` zip, and injecting metadata will not produce a valid protected file. To tell which kind you have, download a hand-labeled file and try to open it as a zip: a normal zip is classification-only (supported here); an OLE/compound file with an `EncryptedPackage` stream is encrypted (needs the MIP SDK).
+- **Signed labels.** Some tenants (with co-authoring for labeled files enabled) cryptographically sign the label metadata. If yours does, hand-injected metadata may be rejected. The label block written by this library carries no signature; if your tenant requires one, this approach will not hold and the MIP SDK is required. Verify by inspecting `docMetadata/LabelInfo.xml` in a hand-labeled file for signature attributes.
+- **`customXml` parts are also dropped by openpyxl.** SharePoint content-type metadata (e.g. `ContentTypeId`) stored in `customXml/*` does not survive the round-trip either. This library preserves the sensitivity label specifically, not those parts.
+
 ## Common patterns
 
 ### Parameterized report

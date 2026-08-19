@@ -6,6 +6,9 @@ Complete reference for every public symbol exported by `dbx_sharepoint`.
 from dbx_sharepoint import (
     SharePointClient,
     Template,
+    SensitivityLabel,
+    apply_sensitivity_label,
+    extract_sensitivity_label,
     read_excel_from_shared_link,
     SharePointError,
     SharePointAuthError,
@@ -28,6 +31,7 @@ SharePointClient(
     credential: TokenCredential,
     site_url: str,
     graph_endpoint: Optional[str] = None,
+    default_sensitivity_label: Optional[SensitivityLabel] = None,
 )
 ```
 
@@ -36,6 +40,7 @@ SharePointClient(
 - `credential` — any `azure.identity.TokenCredential` (`ClientSecretCredential`, `ManagedIdentityCredential`, `DefaultAzureCredential`, etc.).
 - `site_url` — the SharePoint site URL in the form `https://{host}/sites/{site-name}`. The hostname determines whether the client uses Commercial or Gov Graph endpoints.
 - `graph_endpoint` *(optional)* — override the auto-detected Graph endpoint. For unusual sovereign-cloud scenarios.
+- `default_sensitivity_label` *(optional)* — a [`SensitivityLabel`](#sensitivitylabel) applied by `write_excel` when no per-call label is given. Template writes preserve the template's own label, so this default does not override them.
 
 **Raises**
 
@@ -50,10 +55,11 @@ SharePointClient.from_databricks_secrets(
     prefix: str = "",
     site_url: Optional[str] = None,
     graph_endpoint: Optional[str] = None,
+    default_sensitivity_label: Optional[SensitivityLabel] = None,
 ) -> SharePointClient
 ```
 
-Factory that reads credentials from a Databricks secret scope and builds a client with the correct authority for the detected cloud.
+Factory that reads credentials from a Databricks secret scope and builds a client with the correct authority for the detected cloud. `default_sensitivity_label` is forwarded to the constructor.
 
 **Expected secret keys** (prepended with `{prefix}-` if `prefix` is given):
 
@@ -135,10 +141,11 @@ write_excel(
     df: pd.DataFrame,
     url_or_path: str,
     sheet_name: str = "Sheet1",
+    sensitivity_label: Optional[SensitivityLabel] = None,
 ) -> None
 ```
 
-Write a DataFrame as a new `.xlsx` file. This is a single-sheet convenience helper.
+Write a DataFrame as a new `.xlsx` file. This is a single-sheet convenience helper. `sensitivity_label` stamps a MIP label on the output; it falls back to the client's `default_sensitivity_label`. See [`SensitivityLabel`](#sensitivitylabel).
 
 Writing to a `.xlsm` path raises `ValueError`. `write_excel` builds a fresh workbook with no macros, so the bytes are a regular `.xlsx`; saving them under a `.xlsm` extension produces a file Excel rejects as corrupt. To produce a valid `.xlsm`, use [`write_excel_from_template`](#write_excel_from_template) with a macro-enabled template. Reading a `.xlsm` with `read_excel` works normally — you get the cell data; macros are not represented in a DataFrame.
 
@@ -171,12 +178,15 @@ write_excel_from_template(
     start_cell: str = "A1",
     orientation: str = "rows",
     include_header: bool = True,
+    sensitivity_label: Optional[SensitivityLabel] = None,
 ) -> None
 ```
 
 Download a template, fill it with `df` starting at `start_cell`, and upload the result to `dest_url_or_path`. `sheet_name` defaults to the template's active sheet. If `sheet_name` is missing from a single-sheet blank template, that blank sheet is renamed; otherwise a new sheet is created. `include_header=True` writes DataFrame column names before the values, matching `write_excel`. This is the one-call path for the common "fill one sheet and save" case.
 
 Macro-enabled templates (`.xlsm`) are detected automatically and their VBA project is preserved, so the saved file opens cleanly in Excel. This is the only write path that produces a valid `.xlsm` — `write_excel` cannot, because it builds a fresh workbook with no macros. Keep the `.xlsm` extension on `dest_url_or_path`. See [Excel templates → Macro-enabled templates](excel-templates.md#macro-enabled-templates-xlsm).
+
+A sensitivity label on the template is preserved on the output. `sensitivity_label` sets or overrides it explicitly. See [Excel templates → Sensitivity labels](excel-templates.md#sensitivity-labels-microsoft-information-protection).
 
 ### `save`
 
@@ -250,7 +260,62 @@ Set a single cell's value.
 to_bytes() -> bytes
 ```
 
-Serialize the current workbook state to `.xlsx` bytes. In typical use, pass the `Template` to `sp.save` instead of calling this directly.
+Serialize the current workbook state to `.xlsx` bytes. In typical use, pass the `Template` to `sp.save` instead of calling this directly. Any sensitivity label the template carries (or one set via `set_sensitivity_label`) is re-applied, since openpyxl drops the label part on save.
+
+### Sensitivity label methods
+
+```python
+Template.sensitivity_label          # property → Optional[SensitivityLabel]
+Template.set_sensitivity_label(label: SensitivityLabel) -> None
+Template.clear_sensitivity_label() -> None
+```
+
+`sensitivity_label` is initialized from the label the template was loaded with, so a labeled template keeps its label through the round-trip. `set_sensitivity_label` overrides it; `clear_sensitivity_label` produces an unlabeled file. See [`SensitivityLabel`](#sensitivitylabel).
+
+---
+
+## `SensitivityLabel`
+
+```python
+SensitivityLabel(
+    label_id: str,
+    site_id: str,
+    method: str = "Privileged",
+    content_bits: int = 0,
+    enabled: bool = True,
+    removed: bool = False,
+    name: Optional[str] = None,
+)
+```
+
+A Microsoft Information Protection (MIP) sensitivity label in its classification-only (unencrypted) form — the metadata Office stores in `docMetadata/LabelInfo.xml`. Frozen dataclass; equality ignores `name`.
+
+**Parameters**
+
+- `label_id` — the label GUID, with or without braces (normalized to `{...}` on write).
+- `site_id` — the tenant/site GUID the label belongs to.
+- `method` — `"Privileged"` (set by explicit user action, what Excel writes when a person picks a label) or `"Standard"` (automatically applied). Either satisfies a mandatory-labeling policy.
+- `content_bits` — visual-marking flags (header/footer/watermark). `0` for the classification-only case.
+- `enabled` / `removed` — label state. Almost always `True` / `False`.
+- `name` — optional human-readable name. Informational only; not written to the file and not part of equality.
+
+Obtain the GUIDs from the Purview portal, from `Get-Label` in Security & Compliance PowerShell, or with `extract_sensitivity_label` on a hand-labeled file. See [Excel templates → Sensitivity labels](excel-templates.md#sensitivity-labels-microsoft-information-protection).
+
+### `apply_sensitivity_label`
+
+```python
+apply_sensitivity_label(data: bytes, label: SensitivityLabel) -> bytes
+```
+
+Stamp a classification-only label onto workbook bytes, wiring `docMetadata/LabelInfo.xml` into the package and leaving every other part (including `xl/vbaProject.bin`) untouched. Idempotent. Does not apply encryption.
+
+### `extract_sensitivity_label`
+
+```python
+extract_sensitivity_label(data: bytes) -> Optional[SensitivityLabel]
+```
+
+Read the label from a workbook, or return `None` if it is unlabeled (or not a valid OOXML package).
 
 ---
 

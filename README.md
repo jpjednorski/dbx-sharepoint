@@ -23,6 +23,7 @@ A small, dependency-light Python library for reading, writing, and templating Ex
 - Gov and Commercial endpoint auto-detection from the site URL. Explicit override supported.
 - Excel read and write via pandas (`read_excel`, `write_excel`).
 - Template workflow that preserves workbook formatting, formulas, named ranges, and macro-enabled `.xlsm` structure. Fill a range by `(sheet, start_cell)` or by `named_range`. Transpose with `orientation="columns"`. Optional bounds checking with `end_cell`.
+- Microsoft Information Protection (MIP) sensitivity labels preserved through the openpyxl round-trip, so files stay labeled for tenants with mandatory labeling. Set or override labels explicitly with `SensitivityLabel`. Classification-only (no encryption). See [docs/excel-templates.md](docs/excel-templates.md#sensitivity-labels-microsoft-information-protection).
 - Raw file download and upload for any binary content (PDFs, CSVs, images) via bytes.
 - Databricks secret-scope factory method: `SharePointClient.from_databricks_secrets(...)`.
 - Shared-link helper for "anyone with the link" Excel reads that do not require auth.
@@ -44,7 +45,7 @@ More on this in [docs/lakeflow-connect.md](docs/lakeflow-connect.md).
 
 ```bash
 # From a built wheel
-pip install dbx_sharepoint-0.1.0-py3-none-any.whl
+pip install dbx_sharepoint-0.3.0-py3-none-any.whl
 
 # Or from a git ref
 pip install "git+https://github.com/<org>/<repo>.git@main"
@@ -53,7 +54,7 @@ pip install "git+https://github.com/<org>/<repo>.git@main"
 Inside a Databricks notebook:
 
 ```python
-%pip install /dbfs/FileStore/wheels/dbx_sharepoint-0.1.0-py3-none-any.whl
+%pip install /dbfs/FileStore/wheels/dbx_sharepoint-0.3.0-py3-none-any.whl
 dbutils.library.restartPython()
 ```
 
@@ -132,6 +133,9 @@ Details in [docs/excel-templates.md](docs/excel-templates.md).
 from dbx_sharepoint import (
     SharePointClient,           # main client
     Template,                   # Excel template wrapper
+    SensitivityLabel,           # MIP sensitivity label (classification-only)
+    apply_sensitivity_label,    # stamp a label onto workbook bytes
+    extract_sensitivity_label,  # read a label off workbook bytes
     read_excel_from_shared_link,  # anon shared-link reader
     SharePointError,            # base exception
     SharePointAuthError,        # 401
