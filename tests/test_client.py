@@ -114,6 +114,27 @@ class TestFromDatabricksSecrets:
             )
             assert client._site_name == "FromParam"
 
+    def test_factory_forwards_default_sensitivity_label(self):
+        from dbx_sharepoint import SensitivityLabel
+
+        mock_dbutils = MagicMock()
+        mock_dbutils.secrets.get.side_effect = lambda scope, key: {
+            "tenant-id": "t123",
+            "client-id": "c456",
+            "client-secret": "s789",
+            "site-url": "https://myorg.sharepoint.us/sites/Team",
+        }[key]
+        label = SensitivityLabel(label_id="{abc}", site_id="{def}")
+
+        with patch("dbx_sharepoint.auth.ClientSecretCredential") as mock_cred:
+            mock_cred.return_value = MagicMock()
+            client = SharePointClient.from_databricks_secrets(
+                dbutils=mock_dbutils,
+                scope="sharepoint",
+                default_sensitivity_label=label,
+            )
+            assert client._default_sensitivity_label == label
+
 
 class TestListFiles:
     @responses.activate

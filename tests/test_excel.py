@@ -7,11 +7,30 @@ import openpyxl
 import pandas as pd
 import pytest
 from dbx_sharepoint.excel import (
+    SensitivityLabel,
+    apply_sensitivity_label,
     dataframe_from_excel_bytes,
     dataframe_to_excel_bytes,
     dataframe_to_excel_bytes_from_template,
+    extract_sensitivity_label,
     Template,
 )
+
+_LABEL_ID = "{00000000-1111-2222-3333-444444444444}"
+_SITE_ID = "{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}"
+
+
+def _label() -> SensitivityLabel:
+    return SensitivityLabel(label_id=_LABEL_ID, site_id=_SITE_ID, name="INTERNAL")
+
+
+def _make_labeled_xlsx_bytes() -> bytes:
+    """Helper: a workbook already carrying a sensitivity label, as Excel writes
+    it — the modern ``docMetadata/LabelInfo.xml`` form, wired into the package.
+    """
+    return apply_sensitivity_label(
+        _make_workbook_bytes({"h": [1]}, sheet_name="Sheet1"), _label()
+    )
 
 
 def _make_xlsm_bytes(sheet_name: str = "Sheet1") -> bytes:
@@ -364,3 +383,93 @@ class TestTemplateToBytes:
         output = template.to_bytes()
         wb = openpyxl.load_workbook(io.BytesIO(output))
         assert wb["S1"]["A1"].value == "modified"
+
+
+def _read_part(data: bytes, name: str) -> bytes:
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        return zf.read(name)
+
+
+class TestSensitivityLabel:
+    def test_apply_then_extract_roundtrip(self):
+        labeled = apply_sensitivity_label(
+            _make_workbook_bytes({"a": [1]}), _label()
+        )
+        got = extract_sensitivity_label(labeled)
+        assert got == _label()
+
+    def test_unlabeled_file_extracts_none(self):
+        assert extract_sensitivity_label(_make_workbook_bytes({"a": [1]})) is None
+
+    def test_labelinfo_xml_shape(self):
+        labeled = apply_sensitivity_label(_make_workbook_bytes({"a": [1]}), _label())
+        xml = _read_part(labeled, "docMetadata/LabelInfo.xml").decode()
+        assert f'id="{_LABEL_ID}"' in xml
+        assert f'siteId="{_SITE_ID}"' in xml
+        assert 'method="Privileged"' in xml
+        assert 'enabled="1"' in xml and 'removed="0"' in xml
+
+    def test_apply_wires_content_type_and_relationship(self):
+        labeled = apply_sensitivity_label(_make_workbook_bytes({"a": [1]}), _label())
+        ct = _read_part(labeled, "[Content_Types].xml").decode()
+        rels = _read_part(labeled, "_rels/.rels").decode()
+        assert "/docMetadata/LabelInfo.xml" in ct
+        assert "classificationlabels+xml" in ct
+        assert "classificationlabels" in rels
+
+    def test_guid_normalized_to_braces(self):
+        bare = SensitivityLabel(
+            label_id="00000000-1111-2222-3333-444444444444",
+            site_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        )
+        labeled = apply_sensitivity_label(_make_workbook_bytes({"a": [1]}), bare)
+        xml = _read_part(labeled, "docMetadata/LabelInfo.xml").decode()
+        assert f'id="{_LABEL_ID}"' in xml
+        assert f'siteId="{_SITE_ID}"' in xml
+
+    def test_apply_is_idempotent(self):
+        once = apply_sensitivity_label(_make_workbook_bytes({"a": [1]}), _label())
+        twice = apply_sensitivity_label(once, _label())
+        with zipfile.ZipFile(io.BytesIO(twice)) as zf:
+            names = zf.namelist()
+            ct = zf.read("[Content_Types].xml").decode()
+        assert names.count("docMetadata/LabelInfo.xml") == 1
+        assert ct.count("/docMetadata/LabelInfo.xml") == 1
+
+    def test_apply_preserves_vba(self):
+        labeled = apply_sensitivity_label(_make_xlsm_bytes("Macros"), _label())
+        with zipfile.ZipFile(io.BytesIO(labeled)) as zf:
+            assert "xl/vbaProject.bin" in zf.namelist()
+
+    def test_template_preserves_label_through_roundtrip(self):
+        # The core bug: openpyxl drops the label on save. The template must
+        # re-apply the label it was loaded with.
+        template = Template(_make_labeled_xlsx_bytes())
+        assert template.sensitivity_label == _label()
+        template.set_value("Sheet1", cell="A1", value="x")
+        out = template.to_bytes()
+        assert extract_sensitivity_label(out) == _label()
+
+    def test_template_clear_label_produces_unlabeled_file(self):
+        template = Template(_make_labeled_xlsx_bytes())
+        template.clear_sensitivity_label()
+        assert extract_sensitivity_label(template.to_bytes()) is None
+
+    def test_from_template_preserves_label(self):
+        df = pd.DataFrame({"a": [1, 2]})
+        out = dataframe_to_excel_bytes_from_template(_make_labeled_xlsx_bytes(), df)
+        assert extract_sensitivity_label(out) == _label()
+
+    def test_from_template_label_override(self):
+        other = SensitivityLabel(label_id="{aaaa}", site_id="{bbbb}")
+        df = pd.DataFrame({"a": [1]})
+        out = dataframe_to_excel_bytes_from_template(
+            _make_labeled_xlsx_bytes(), df, sensitivity_label=other
+        )
+        assert extract_sensitivity_label(out) == other
+
+    def test_dataframe_to_excel_bytes_applies_label(self):
+        out = dataframe_to_excel_bytes(
+            pd.DataFrame({"a": [1]}), sensitivity_label=_label()
+        )
+        assert extract_sensitivity_label(out) == _label()

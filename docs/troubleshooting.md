@@ -99,6 +99,16 @@ The call asked `fill_range` to write more data than the bounded range holds.
 2. The write included non-serializable Python objects (custom classes, `numpy.datetime64` without conversion). Stick to native Python types, pandas Timestamps, or numeric types.
 3. A formula string contains a character Excel rejects. Prefix formulas with `=` and confirm the body is valid Excel syntax.
 
+### A generated file can't be read from another Excel workbook / has no sensitivity label
+
+The tenant enforces mandatory sensitivity labeling (Microsoft Purview / MIP), and the file was written without a label. It opens on double-click (Excel prompts for a label) but a remote read from another workbook fails until one is applied.
+
+openpyxl drops the label part on save, so even a labeled template produces unlabeled output. Fixes, in order of preference:
+
+1. Label the template in Excel and save it back. Files filled via `write_excel_from_template` / `open_template` + `save` then inherit the label automatically.
+2. Pass an explicit `sensitivity_label=` to the write call, or set `sp._default_sensitivity_label` for `write_excel`. See [Sensitivity labels](excel-templates.md#sensitivity-labels-microsoft-information-protection).
+3. If the label applies **encryption** (the hand-labeled file is not a valid zip but an OLE container with an `EncryptedPackage` stream), this metadata approach does not apply — the Microsoft MIP SDK is required.
+
 ### `read_excel` returns an empty DataFrame
 
 1. Wrong sheet. When `sheet_name=None`, pandas normally returns all sheets as a dict. This library defaults to `0` (first sheet) when `None` is passed. Supply an explicit sheet name to avoid ambiguity.

@@ -9,7 +9,7 @@ build/
 .DS_Store
 **/.DS_Store
 
-# Local test artifacts / sample workbooks — never commit (may contain customer data)
+# Local test artifacts / sample workbooks 
 *.xlsm
 *.xlsx
 dbx-sharepoint.zip

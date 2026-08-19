@@ -9,6 +9,7 @@ import requests
 from dbx_sharepoint._url import detect_environment, parse_sharepoint_url
 from dbx_sharepoint.auth import build_credential_from_databricks_secrets
 from dbx_sharepoint.excel import (
+    SensitivityLabel,
     Template,
     dataframe_from_excel_bytes,
     dataframe_to_excel_bytes,
@@ -32,6 +33,10 @@ class SharePointClient:
         credential: Any azure-identity TokenCredential (e.g., ClientSecretCredential).
         site_url: SharePoint site URL (e.g., "https://myorg.sharepoint.us/sites/Team").
         graph_endpoint: Optional override for the Graph API endpoint.
+        default_sensitivity_label: Optional MIP sensitivity label applied to
+            workbooks written by ``write_excel`` when no per-call label is
+            given. Template writes preserve the template's own label, so this
+            default does not override them.
     """
 
     _MAX_RETRIES = 3
@@ -43,9 +48,11 @@ class SharePointClient:
         credential: Any,
         site_url: str,
         graph_endpoint: Optional[str] = None,
+        default_sensitivity_label: Optional[SensitivityLabel] = None,
     ):
         self._credential = credential
         self._site_url = site_url
+        self._default_sensitivity_label = default_sensitivity_label
 
         parsed = parse_sharepoint_url(site_url)
         self._hostname = parsed.hostname
@@ -65,12 +72,16 @@ class SharePointClient:
         prefix: str = "",
         site_url: Optional[str] = None,
         graph_endpoint: Optional[str] = None,
+        default_sensitivity_label: Optional[SensitivityLabel] = None,
     ) -> "SharePointClient":
         """Create a client using credentials from a Databricks secret scope.
 
         Expects these keys in the scope (with optional prefix):
             {prefix}-tenant-id, {prefix}-client-id, {prefix}-client-secret
             {prefix}-site-url (optional, overridden by site_url param)
+
+        ``default_sensitivity_label`` is forwarded to the constructor; see
+        :class:`SharePointClient`.
         """
         key_prefix = f"{prefix}-" if prefix else ""
         resolved_site_url = site_url
@@ -96,6 +107,7 @@ class SharePointClient:
             credential=credential,
             site_url=resolved_site_url,
             graph_endpoint=graph_endpoint,
+            default_sensitivity_label=default_sensitivity_label,
         )
 
     def _get_token(self) -> str:
@@ -334,6 +346,7 @@ class SharePointClient:
         df: pd.DataFrame,
         url_or_path: str,
         sheet_name: str = "Sheet1",
+        sensitivity_label: Optional[SensitivityLabel] = None,
     ) -> None:
         """Write a DataFrame as a new .xlsx file to SharePoint.
 
@@ -341,6 +354,8 @@ class SharePointClient:
             df: The DataFrame to write.
             url_or_path: Full SharePoint URL or path for the destination file.
             sheet_name: Name of the sheet in the workbook.
+            sensitivity_label: Optional MIP sensitivity label to stamp on the
+                file. Falls back to the client's ``default_sensitivity_label``.
 
         Raises:
             ValueError: If the destination ends in ``.xlsm``. A DataFrame has no
@@ -357,7 +372,10 @@ class SharePointClient:
                 "write_excel_from_template(df, template, dest) with a "
                 "macro-enabled template to preserve macros."
             )
-        xlsx_bytes = dataframe_to_excel_bytes(df, sheet_name=sheet_name)
+        label = sensitivity_label or self._default_sensitivity_label
+        xlsx_bytes = dataframe_to_excel_bytes(
+            df, sheet_name=sheet_name, sensitivity_label=label
+        )
         self.upload(xlsx_bytes, url_or_path)
 
     def write_excel_from_template(
@@ -369,12 +387,18 @@ class SharePointClient:
         start_cell: str = "A1",
         orientation: str = "rows",
         include_header: bool = True,
+        sensitivity_label: Optional[SensitivityLabel] = None,
     ) -> None:
         """Fill a SharePoint Excel template with a DataFrame and save the result.
 
         Downloads the template, writes ``df`` into it, and uploads the result to
         ``dest_url_or_path``. Macro-enabled templates (``.xlsm``) keep their VBA
         project intact, so the saved file opens cleanly in Excel.
+
+        A sensitivity label on the template is preserved on the output. This is
+        the common fix for mandatory-labeling tenants: label the template once
+        in Excel, and every generated file inherits the label. Pass
+        ``sensitivity_label`` to set or override it explicitly.
 
         Args:
             df: DataFrame to write.
@@ -388,6 +412,9 @@ class SharePointClient:
             orientation: "rows" (default) or "columns".
             include_header: Whether to write DataFrame column names before the
                 values. Defaults True to match ``write_excel``.
+            sensitivity_label: Optional MIP sensitivity label. Overrides the
+                template's own label when provided; otherwise the template's
+                label is preserved.
         """
         template_bytes = self.download(template_url_or_path)
         out_bytes = dataframe_to_excel_bytes_from_template(
@@ -397,6 +424,7 @@ class SharePointClient:
             start_cell=start_cell,
             orientation=orientation,
             include_header=include_header,
+            sensitivity_label=sensitivity_label,
         )
         self.upload(out_bytes, dest_url_or_path)
 

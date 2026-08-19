@@ -23,3 +23,13 @@ class TestPublicApi:
     def test_import_shared_link(self):
         from dbx_sharepoint import read_excel_from_shared_link
         assert callable(read_excel_from_shared_link)
+
+    def test_import_sensitivity_label(self):
+        from dbx_sharepoint import (
+            SensitivityLabel,
+            apply_sensitivity_label,
+            extract_sensitivity_label,
+        )
+        assert SensitivityLabel is not None
+        assert callable(apply_sensitivity_label)
+        assert callable(extract_sensitivity_label)
